@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Multi-Timezone Clock</title>
+    <script>
+        function updateClock() {
+            const now = new Date();
+            const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+
+            const timezones = {
+                "UTC": new Date(utc),
+                "GMT+1": new Date(utc + (3600000 * 1)),
+                "GMT+2": new Date(utc + (3600000 * 2)),
+                "GMT-1": new Date(utc - (3600000 * 1)),
+                "GMT-2": new Date(utc - (3600000 * 2))
+                // Add more timezones as needed
+            };
+
+            let clockHTML = '';
+            for (const [zone, time] of Object.entries(timezones)) {
+                clockHTML += `<p>${zone}: ${time.toISOString().substring(0, 19).replace('T', ' ')} UTC</p>`;
+            }
+
+            document.getElementById('clocks').innerHTML = clockHTML;
+        }
+
+        setInterval(updateClock, 1000);
+    </script>
+</head>
+<body onload="updateClock()">
+    <h1>Digital Multi-Timezone Clock</h1>
+    <div id="clocks"></div>
+</body>
+</html>
