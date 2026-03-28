@@ -1,0 +1,575 @@
+# “””
+
+CCM Document Composition Engine
+Modern Python replacement for OpenText Exstream
+
+Pipeline:
+CSV Data File  →  Row Iterator  →  Template Merge  →  PDF per Customer
+
+# Exstream Equivalent:
+Data stream    →  Trigger/Break →  Publication    →  AFP/PDF Output
+
+“””
+
+import csv
+import os
+import json
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.platypus import (
+SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+HRFlowable, KeepTogether
+)
+from reportlab.graphics.shapes import Drawing, Rect
+from reportlab.graphics import renderPDF
+
+# =============================================================================
+
+# COLOUR PALETTE  (like a Designer theme)
+
+# =============================================================================
+
+BRAND_BLUE     = colors.HexColor(”#1A3C6E”)
+BRAND_TEAL     = colors.HexColor(”#00778B”)
+BRAND_GOLD     = colors.HexColor(”#C8962E”)
+LIGHT_GREY     = colors.HexColor(”#F5F7FA”)
+MID_GREY       = colors.HexColor(”#DEE3EA”)
+DARK_GREY      = colors.HexColor(”#4A4A4A”)
+WHITE          = colors.white
+RED_ALERT      = colors.HexColor(”#C0392B”)
+GREEN_OK       = colors.HexColor(”#27AE60”)
+
+# =============================================================================
+
+# STYLE SHEET  (like Designer paragraph styles)
+
+# =============================================================================
+
+def build_styles():
+base = getSampleStyleSheet()
+
+```
+styles = {
+    "bank_name": ParagraphStyle(
+        "bank_name", fontName="Helvetica-Bold",
+        fontSize=18, textColor=WHITE, alignment=TA_LEFT, leading=22
+    ),
+    "bank_tagline": ParagraphStyle(
+        "bank_tagline", fontName="Helvetica",
+        fontSize=8, textColor=colors.HexColor("#B0C4DE"),
+        alignment=TA_LEFT
+    ),
+    "section_heading": ParagraphStyle(
+        "section_heading", fontName="Helvetica-Bold",
+        fontSize=10, textColor=BRAND_BLUE,
+        spaceBefore=8, spaceAfter=4
+    ),
+    "label": ParagraphStyle(
+        "label", fontName="Helvetica",
+        fontSize=8, textColor=colors.HexColor("#888888")
+    ),
+    "value": ParagraphStyle(
+        "value", fontName="Helvetica-Bold",
+        fontSize=9, textColor=DARK_GREY
+    ),
+    "address": ParagraphStyle(
+        "address", fontName="Helvetica",
+        fontSize=9, textColor=DARK_GREY, leading=14
+    ),
+    "body": ParagraphStyle(
+        "body", fontName="Helvetica",
+        fontSize=8.5, textColor=DARK_GREY, leading=13
+    ),
+    "footer": ParagraphStyle(
+        "footer", fontName="Helvetica",
+        fontSize=7, textColor=colors.HexColor("#999999"),
+        alignment=TA_CENTER
+    ),
+    "amount_debit": ParagraphStyle(
+        "amount_debit", fontName="Helvetica-Bold",
+        fontSize=9, textColor=RED_ALERT, alignment=TA_RIGHT
+    ),
+    "amount_credit": ParagraphStyle(
+        "amount_credit", fontName="Helvetica-Bold",
+        fontSize=9, textColor=GREEN_OK, alignment=TA_RIGHT
+    ),
+    "summary_value": ParagraphStyle(
+        "summary_value", fontName="Helvetica-Bold",
+        fontSize=13, textColor=BRAND_BLUE, alignment=TA_RIGHT
+    ),
+    "summary_label": ParagraphStyle(
+        "summary_label", fontName="Helvetica",
+        fontSize=8, textColor=colors.HexColor("#888888"), alignment=TA_RIGHT
+    ),
+}
+return styles
+```
+
+# =============================================================================
+
+# TEMPLATE FUNCTIONS  (like Designer composition rules)
+
+# =============================================================================
+
+def build_header(styles, customer):
+“”“Replaces: Exstream header composition block”””
+
+```
+# Bank logo / name bar
+header_data = [[
+    Paragraph("FirstTech Bank", styles["bank_name"]),
+    Paragraph(f"Statement Date: {datetime.now().strftime('%B %d, %Y')}", 
+              ParagraphStyle("rd", fontName="Helvetica", fontSize=8,
+                             textColor=WHITE, alignment=TA_RIGHT))
+]]
+header_table = Table(header_data, colWidths=[3.5*inch, 3.5*inch])
+header_table.setStyle(TableStyle([
+    ("BACKGROUND",   (0,0), (-1,-1), BRAND_BLUE),
+    ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
+    ("TOPPADDING",   (0,0), (-1,-1), 14),
+    ("BOTTOMPADDING",(0,0), (-1,-1), 14),
+    ("LEFTPADDING",  (0,0), (0,-1),  18),
+    ("RIGHTPADDING", (-1,0),(-1,-1), 18),
+]))
+
+tagline_data = [[
+    Paragraph("Your Trusted Financial Partner Since 1985", styles["bank_tagline"]),
+    Paragraph("Account Statement", 
+              ParagraphStyle("st", fontName="Helvetica-Bold", fontSize=9,
+                             textColor=WHITE, alignment=TA_RIGHT))
+]]
+tagline_table = Table(tagline_data, colWidths=[3.5*inch, 3.5*inch])
+tagline_table.setStyle(TableStyle([
+    ("BACKGROUND",   (0,0), (-1,-1), BRAND_TEAL),
+    ("TOPPADDING",   (0,0), (-1,-1), 5),
+    ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+    ("LEFTPADDING",  (0,0), (0,-1),  18),
+    ("RIGHTPADDING", (-1,0),(-1,-1), 18),
+]))
+
+return [header_table, tagline_table]
+```
+
+def build_customer_info_block(styles, customer):
+“”“Replaces: Exstream address/recipient block”””
+
+```
+# Left: customer address  |  Right: account summary boxes
+addr_lines = (
+    f"<b>{customer['Name']}</b><br/>"
+    f"{customer['Address']}<br/>"
+    f"{customer['City']}, {customer['State']} {customer['ZIP']}"
+)
+
+account_info = [
+    ["Account Number",  customer["AccountNumber"]],
+    ["Account Type",    customer["AccountType"]],
+    ["Member Since",    customer["OpenDate"]],
+    ["Statement Period","Jan 01 – Jan 31, 2024"],
+]
+
+left_cell  = Paragraph(addr_lines, styles["address"])
+right_rows = []
+for lbl, val in account_info:
+    right_rows.append([
+        Paragraph(lbl, styles["label"]),
+        Paragraph(val, styles["value"])
+    ])
+
+right_table = Table(right_rows, colWidths=[1.4*inch, 1.8*inch])
+right_table.setStyle(TableStyle([
+    ("BACKGROUND",   (0,0), (-1,-1), LIGHT_GREY),
+    ("TOPPADDING",   (0,0), (-1,-1), 4),
+    ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+    ("LEFTPADDING",  (0,0), (-1,-1), 8),
+    ("RIGHTPADDING", (-1,0),(-1,-1), 8),
+    ("LINEBELOW",    (0,0), (-1,-2), 0.5, MID_GREY),
+    ("ROUNDEDCORNERS", [4]),
+]))
+
+outer = Table([[left_cell, right_table]],
+              colWidths=[3.8*inch, 3.2*inch])
+outer.setStyle(TableStyle([
+    ("VALIGN",      (0,0), (-1,-1), "TOP"),
+    ("TOPPADDING",  (0,0), (-1,-1), 12),
+    ("LEFTPADDING", (0,0), (0,-1),  0),
+]))
+return [outer, Spacer(1, 10)]
+```
+
+def build_account_summary(styles, customer):
+“”“Replaces: Exstream summary / balance block”””
+
+```
+# Determine if customer is in good standing
+balance_num = float(customer["CurrentBalance"].replace("$","").replace(",",""))
+limit_num   = float(customer["CreditLimit"].replace("$","").replace(",",""))
+utilization = (balance_num / limit_num) * 100
+status_color = RED_ALERT if utilization > 80 else GREEN_OK
+status_text  = "ATTENTION REQUIRED" if utilization > 80 else "IN GOOD STANDING"
+
+summary_items = [
+    ["Credit Limit",    customer["CreditLimit"]],
+    ["Current Balance", customer["CurrentBalance"]],
+    ["Minimum Payment", customer["MinPayment"]],
+    ["Payment Due Date",customer["DueDate"]],
+]
+
+cells = []
+for lbl, val in summary_items:
+    cells.append(Paragraph(lbl, styles["summary_label"]))
+    cells.append(Paragraph(val, styles["summary_value"]))
+
+# 4-column layout: label | value | label | value
+grid = [
+    [cells[0], cells[1], cells[2], cells[3]],
+    [cells[4], cells[5], cells[6], cells[7]],
+]
+
+status_para = Paragraph(
+    f'<font color="{"#C0392B" if utilization > 80 else "#27AE60"}">'
+    f'● {status_text}</font>',
+    ParagraphStyle("status", fontName="Helvetica-Bold",
+                   fontSize=8, alignment=TA_RIGHT)
+)
+
+summary_table = Table(grid, colWidths=[1.7*inch]*4)
+summary_table.setStyle(TableStyle([
+    ("BACKGROUND",   (0,0), (-1,-1), LIGHT_GREY),
+    ("TOPPADDING",   (0,0), (-1,-1), 8),
+    ("BOTTOMPADDING",(0,0), (-1,-1), 8),
+    ("LEFTPADDING",  (0,0), (-1,-1), 10),
+    ("RIGHTPADDING", (-1,0),(-1,-1), 10),
+    ("LINEAFTER",    (1,0), (1,-1),  0.5, MID_GREY),
+    ("BOX",          (0,0), (-1,-1), 0.5, BRAND_TEAL),
+]))
+
+section = [
+    Paragraph("ACCOUNT SUMMARY", styles["section_heading"]),
+    HRFlowable(width="100%", thickness=1.5, color=BRAND_BLUE,
+               spaceAfter=6),
+    summary_table,
+    Spacer(1, 4),
+    status_para,
+    Spacer(1, 14),
+]
+return section
+```
+
+def build_transactions(styles, customer):
+“”“Replaces: Exstream transaction detail loop / repeating group”””
+
+```
+txn_header = [
+    Paragraph("DATE",        ParagraphStyle("th", fontName="Helvetica-Bold",
+                             fontSize=8, textColor=WHITE)),
+    Paragraph("DESCRIPTION", ParagraphStyle("th", fontName="Helvetica-Bold",
+                             fontSize=8, textColor=WHITE)),
+    Paragraph("AMOUNT",      ParagraphStyle("th", fontName="Helvetica-Bold",
+                             fontSize=8, textColor=WHITE, alignment=TA_RIGHT)),
+]
+
+rows = [txn_header]
+running_total = 0.0
+
+# Iterate through transactions (Exstream: repeating group on TXN segment)
+for i in range(1, 5):
+    date_key = f"TxnDate{i}"
+    desc_key = f"TxnDesc{i}"
+    amt_key  = f"TxnAmt{i}"
+
+    if not customer.get(date_key) or not customer[date_key].strip():
+        continue
+
+    amt_str = customer[amt_key].strip()
+    amt_num = float(amt_str.replace("$","").replace(",",""))
+    running_total += amt_num
+
+    # Alternate row shading (like Designer alternate row style)
+    row_bg = WHITE if i % 2 == 0 else LIGHT_GREY
+
+    rows.append([
+        Paragraph(customer[date_key], styles["body"]),
+        Paragraph(customer[desc_key], styles["body"]),
+        Paragraph(
+            f'<font color="#C0392B">{amt_str}</font>',
+            ParagraphStyle("ar", fontName="Helvetica",
+                           fontSize=8.5, alignment=TA_RIGHT)
+        ),
+    ])
+
+# Total row
+rows.append([
+    Paragraph("", styles["body"]),
+    Paragraph("<b>TOTAL CHARGES THIS PERIOD</b>",
+              ParagraphStyle("tot", fontName="Helvetica-Bold",
+                             fontSize=9, alignment=TA_RIGHT)),
+    Paragraph(f"<b>${running_total:,.2f}</b>",
+              ParagraphStyle("tota", fontName="Helvetica-Bold",
+                             fontSize=9, textColor=BRAND_BLUE,
+                             alignment=TA_RIGHT)),
+])
+
+txn_table = Table(rows, colWidths=[1.1*inch, 4.4*inch, 1.5*inch])
+
+# Build alternate row colours dynamically
+style_cmds = [
+    ("BACKGROUND",    (0,0), (-1,0),   BRAND_BLUE),
+    ("BACKGROUND",    (0,-1),(-1,-1),  LIGHT_GREY),
+    ("TOPPADDING",    (0,0), (-1,-1),  6),
+    ("BOTTOMPADDING", (0,0), (-1,-1),  6),
+    ("LEFTPADDING",   (0,0), (-1,-1),  8),
+    ("RIGHTPADDING",  (-1,0),(-1,-1),  8),
+    ("LINEBELOW",     (0,0), (-1,-2),  0.3, MID_GREY),
+    ("LINEABOVE",     (0,-1),(-1,-1),  1,   BRAND_TEAL),
+    ("VALIGN",        (0,0), (-1,-1),  "MIDDLE"),
+]
+for i in range(1, len(rows)-1):
+    if i % 2 == 0:
+        style_cmds.append(("BACKGROUND", (0,i), (-1,i), LIGHT_GREY))
+
+txn_table.setStyle(TableStyle(style_cmds))
+
+section = [
+    Paragraph("TRANSACTION DETAILS", styles["section_heading"]),
+    HRFlowable(width="100%", thickness=1.5, color=BRAND_BLUE, spaceAfter=6),
+    txn_table,
+    Spacer(1, 16),
+]
+return section
+```
+
+def build_personalized_message(styles, customer):
+“”“AI-style dynamic message based on account data (rule-based personalisation)
+Replaces: Exstream conditional text blocks / business rules”””
+
+```
+balance_num = float(customer["CurrentBalance"].replace("$","").replace(",",""))
+limit_num   = float(customer["CreditLimit"].replace("$","").replace(",",""))
+utilization = (balance_num / limit_num) * 100
+
+# Rule engine (mirrors Exstream conditional content rules)
+if utilization > 80:
+    msg = (
+        f"Dear <b>{customer['Name'].split()[0]}</b>, your current balance is "
+        f"approaching your credit limit. We recommend making a payment above "
+        f"the minimum of {customer['MinPayment']} to maintain a healthy credit "
+        f"utilization ratio. Please ensure payment is received by "
+        f"<b>{customer['DueDate']}</b> to avoid any late fees."
+    )
+    bg = colors.HexColor("#FFF3F3")
+    border = RED_ALERT
+elif utilization > 50:
+    msg = (
+        f"Dear <b>{customer['Name'].split()[0]}</b>, thank you for being a valued "
+        f"{customer['AccountType']} member. Your account is in good standing. "
+        f"Your next minimum payment of <b>{customer['MinPayment']}</b> is due "
+        f"by <b>{customer['DueDate']}</b>."
+    )
+    bg = colors.HexColor("#FFFBF0")
+    border = BRAND_GOLD
+else:
+    msg = (
+        f"Dear <b>{customer['Name'].split()[0]}</b>, excellent account management! "
+        f"You are maintaining a healthy credit utilization of "
+        f"<b>{utilization:.0f}%</b>. As a {customer['AccountType']} member since "
+        f"{customer['OpenDate']}, you may be eligible for a credit limit increase. "
+        f"Contact us to learn more."
+    )
+    bg = colors.HexColor("#F0FFF4")
+    border = GREEN_OK
+
+msg_table = Table(
+    [[Paragraph(msg, styles["body"])]],
+    colWidths=[7*inch]
+)
+msg_table.setStyle(TableStyle([
+    ("BACKGROUND",   (0,0), (-1,-1), bg),
+    ("LEFTPADDING",  (0,0), (-1,-1), 12),
+    ("RIGHTPADDING", (-1,0),(-1,-1), 12),
+    ("TOPPADDING",   (0,0), (-1,-1), 10),
+    ("BOTTOMPADDING",(0,0), (-1,-1), 10),
+    ("LINEBEFORE",   (0,0), (0,-1),  3, border),
+    ("BOX",          (0,0), (-1,-1), 0.5, border),
+]))
+
+section = [
+    Paragraph("PERSONALISED MESSAGE", styles["section_heading"]),
+    HRFlowable(width="100%", thickness=1.5, color=BRAND_BLUE, spaceAfter=6),
+    msg_table,
+    Spacer(1, 16),
+]
+return section
+```
+
+def build_footer(styles, customer):
+“”“Replaces: Exstream footer composition block”””
+return [
+HRFlowable(width=“100%”, thickness=0.5, color=MID_GREY, spaceAfter=6),
+Paragraph(
+“FirstTech Bank | 100 Banking Plaza, New York, NY 10001 | “
+“1-800-555-BANK | www.firsttechbank.com”,
+styles[“footer”]
+),
+Paragraph(
+“This statement is for informational purposes only. “
+“If you have questions, call Customer Service. “
+f”Document ID: {customer[‘CustomerID’]}-”
+f”{datetime.now().strftime(’%Y%m%d%H%M%S’)}”,
+styles[“footer”]
+),
+]
+
+# =============================================================================
+
+# COMPOSITION ENGINE  (the Exstream engine equivalent)
+
+# =============================================================================
+
+def compose_document(customer: dict, output_dir: str, styles: dict) -> str:
+“””
+Compose a single customer document.
+
+```
+This function = one Exstream engine trigger/break cycle.
+Input:  one customer dict (one row from data stream)
+Output: one PDF file
+"""
+
+safe_name = customer['Name'].replace(' ', '_')
+filename  = f"{customer['CustomerID']}_{safe_name}_Statement.pdf"
+filepath  = os.path.join(output_dir, filename)
+
+doc = SimpleDocTemplate(
+    filepath,
+    pagesize=letter,
+    leftMargin=0.6*inch,
+    rightMargin=0.6*inch,
+    topMargin=0.4*inch,
+    bottomMargin=0.6*inch,
+)
+
+# Assemble story (like building a Designer composition flow)
+story = []
+story += build_header(styles, customer)
+story.append(Spacer(1, 12))
+story += build_customer_info_block(styles, customer)
+story += build_account_summary(styles, customer)
+story += build_transactions(styles, customer)
+story += build_personalized_message(styles, customer)
+story += build_footer(styles, customer)
+
+doc.build(story)
+return filepath
+```
+
+# =============================================================================
+
+# BATCH RUN  (the Exstream batch job equivalent)
+
+# =============================================================================
+
+def run_batch(data_file: str, output_dir: str):
+“””
+Main batch composition loop.
+
+```
+Exstream equivalent:
+  - Load pub file       → build_styles() + template functions
+  - Open data stream    → csv.DictReader
+  - Process triggers    → for row in reader
+  - Generate output     → compose_document()
+  - Post-processing     → archive manifest
+"""
+
+print("\n" + "="*60)
+print("  CCM Composition Engine  —  Batch Run Starting")
+print("="*60)
+print(f"  Data File : {data_file}")
+print(f"  Output Dir: {output_dir}")
+print(f"  Run Time  : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print("="*60 + "\n")
+
+styles   = build_styles()
+manifest = []
+success  = 0
+failed   = 0
+
+with open(data_file, newline="", encoding="utf-8") as csvfile:
+    reader = csv.DictReader(csvfile)
+
+    # ── One iteration = one Exstream customer break ──────────────────
+    for row_num, customer in enumerate(reader, start=1):
+        cid = customer.get("CustomerID", f"ROW{row_num}")
+        try:
+            print(f"  [{row_num:>3}] Composing: {cid} — {customer['Name']} ...", end=" ")
+
+            filepath = compose_document(customer, output_dir, styles)
+            file_size = os.path.getsize(filepath)
+
+            print(f"✅  ({file_size/1024:.1f} KB)")
+            manifest.append({
+                "seq": row_num,
+                "customer_id": cid,
+                "name": customer["Name"],
+                "file": os.path.basename(filepath),
+                "size_kb": round(file_size/1024, 1),
+                "status": "SUCCESS",
+                "timestamp": datetime.now().isoformat()
+            })
+            success += 1
+
+        except Exception as e:
+            print(f"❌  ERROR: {e}")
+            manifest.append({
+                "seq": row_num,
+                "customer_id": cid,
+                "name": customer.get("Name",""),
+                "file": "",
+                "status": "FAILED",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            })
+            failed += 1
+
+# ── Write run manifest (like Exstream job log / audit trail) ─────────
+manifest_path = os.path.join(output_dir, "run_manifest.json")
+with open(manifest_path, "w") as mf:
+    json.dump({
+        "run_date": datetime.now().isoformat(),
+        "data_file": data_file,
+        "total": success + failed,
+        "success": success,
+        "failed": failed,
+        "documents": manifest
+    }, mf, indent=2)
+
+print("\n" + "="*60)
+print(f"  ✅ Batch Complete")
+print(f"     Documents Generated : {success}")
+print(f"     Failed              : {failed}")
+print(f"     Manifest            : {manifest_path}")
+print("="*60 + "\n")
+
+return manifest
+```
+
+# =============================================================================
+
+# ENTRY POINT
+
+# =============================================================================
+
+if **name** == “**main**”:
+BASE    = os.path.dirname(os.path.abspath(**file**))
+DATA    = os.path.join(BASE, “customers.csv”)
+OUT_DIR = os.path.join(BASE, “output”)
+
+```
+os.makedirs(OUT_DIR, exist_ok=True)
+run_batch(DATA, OUT_DIR)
+```
